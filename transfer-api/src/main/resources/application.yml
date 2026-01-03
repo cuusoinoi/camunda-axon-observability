@@ -1,0 +1,24 @@
+server:
+  port: 8080
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: prometheus,health,info
+
+zeebe:
+  client:
+    broker:
+      gateway-address: ${ZEEBE_ADDRESS:localhost:26500}
+    security:
+      plaintext: true
+
+security:
+  apiKeyHeader: X-API-Key
+  apiKeyValue: demo-key
+
+rateLimit:
+  capacity: 20
+  refillTokens: 20
+  refillSeconds: 1

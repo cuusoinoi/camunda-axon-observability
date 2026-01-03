@@ -1,0 +1,243 @@
+services:
+  # -------------------- Zeebe: split Gateway (stateless) vs Brokers (stateful) --------------------
+  zeebe-broker-1:
+    image: camunda/zeebe:8.5.3
+    container_name: zeebe-broker-1
+    environment:
+      ZEEBE_BROKER_CLUSTER_NODEID: 0
+      ZEEBE_BROKER_CLUSTER_CLUSTERSIZE: 3
+      ZEEBE_BROKER_CLUSTER_PARTITIONSCOUNT: 3
+      ZEEBE_BROKER_CLUSTER_REPLICATIONFACTOR: 3
+      ZEEBE_BROKER_GATEWAY_ENABLE: "false"
+      ZEEBE_BROKER_NETWORK_HOST: zeebe-broker-1
+    volumes:
+      - zeebe1:/usr/local/zeebe/data
+
+  zeebe-broker-2:
+    image: camunda/zeebe:8.5.3
+    container_name: zeebe-broker-2
+    environment:
+      ZEEBE_BROKER_CLUSTER_NODEID: 1
+      ZEEBE_BROKER_CLUSTER_CLUSTERSIZE: 3
+      ZEEBE_BROKER_CLUSTER_PARTITIONSCOUNT: 3
+      ZEEBE_BROKER_CLUSTER_REPLICATIONFACTOR: 3
+      ZEEBE_BROKER_GATEWAY_ENABLE: "false"
+      ZEEBE_BROKER_NETWORK_HOST: zeebe-broker-2
+    volumes:
+      - zeebe2:/usr/local/zeebe/data
+
+  zeebe-broker-3:
+    image: camunda/zeebe:8.5.3
+    container_name: zeebe-broker-3
+    environment:
+      ZEEBE_BROKER_CLUSTER_NODEID: 2
+      ZEEBE_BROKER_CLUSTER_CLUSTERSIZE: 3
+      ZEEBE_BROKER_CLUSTER_PARTITIONSCOUNT: 3
+      ZEEBE_BROKER_CLUSTER_REPLICATIONFACTOR: 3
+      ZEEBE_BROKER_GATEWAY_ENABLE: "false"
+      ZEEBE_BROKER_NETWORK_HOST: zeebe-broker-3
+    volumes:
+      - zeebe3:/usr/local/zeebe/data
+
+  zeebe-gateway:
+    image: camunda/zeebe:8.5.3
+    container_name: zeebe-gateway
+    ports:
+      - "26500:26500"
+    environment:
+      # Run Zeebe Gateway only (stateless)
+      ZEEBE_BROKER_GATEWAY_ENABLE: "true"
+      # Contact point to the broker cluster
+      ZEEBE_GATEWAY_CLUSTER_CONTACTPOINT: zeebe-broker-1:26502
+    depends_on:
+      - zeebe-broker-1
+      - zeebe-broker-2
+      - zeebe-broker-3
+
+  # -------------------- Axon (event store only) --------------------
+  axonserver:
+    image: axoniq/axonserver:2024.1.0
+    environment:
+      AXONIQ_AXONSERVER_STANDALONE: "true"
+    ports:
+      - "8024:8024"
+      - "8124:8124"
+
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/8124'"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  # -------------------- Kafka (Redpanda) --------------------
+  redpanda:
+    image: redpandadata/redpanda:v24.2.8
+    command:
+      - redpanda
+      - start
+      - --overprovisioned
+      - --smp
+      - "1"
+      - --memory
+      - "1G"
+      - --reserve-memory
+      - "0M"
+      - --node-id
+      - "0"
+      - --check=false
+      - --kafka-addr
+      - "PLAINTEXT://0.0.0.0:9092"
+      - --advertise-kafka-addr
+      - "PLAINTEXT://redpanda:9092"
+    ports:
+      - "9092:9092"
+
+  redpanda-console:
+    image: redpandadata/console:v2.6.0
+    environment:
+      KAFKA_BROKERS: "redpanda:9092"
+    ports:
+      - "8088:8080"
+    depends_on:
+      - redpanda
+
+  # -------------------- Observability: OTEL -> Tempo -> Grafana, Prometheus --------------------
+  tempo:
+    image: grafana/tempo:2.5.0
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./infra/otel/tempo.yaml:/etc/tempo.yaml:ro
+    ports:
+      - "3200:3200"
+
+  otel-collector:
+    image: otel/opentelemetry-collector:0.104.0
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./infra/otel/otel-collector.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+    depends_on:
+      - tempo
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+
+  grafana:
+    image: grafana/grafana:11.1.4
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - ./infra/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./infra/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+      - tempo
+
+  # -------------------- Domain services (Axon) --------------------
+  account-service:
+    build: ./account-service
+    environment:
+      OTEL_SERVICE_NAME: account-service
+      AXONSERVER_SERVERS: axonserver:8124
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+      OTEL_TRACES_EXPORTER: otlp
+      OTEL_METRICS_EXPORTER: none
+      OTEL_TRACES_SAMPLER: parentbased_traceidratio
+      OTEL_TRACES_SAMPLER_ARG: "1.0"
+      OTEL_INSTRUMENTATION_LOGBACK_APPENDER_ENABLED: "true"
+    ports:
+      - "8081:8080"
+    depends_on:
+      axonserver:
+        condition: service_healthy
+      redpanda:
+        condition: service_started
+      otel-collector:
+        condition: service_started
+
+  ledger-service:
+    build: ./ledger-service
+    environment:
+      OTEL_SERVICE_NAME: ledger-service
+      AXONSERVER_SERVERS: axonserver:8124
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+      OTEL_TRACES_EXPORTER: otlp
+      OTEL_METRICS_EXPORTER: none
+      OTEL_TRACES_SAMPLER: parentbased_traceidratio
+      OTEL_TRACES_SAMPLER_ARG: "1.0"
+      OTEL_INSTRUMENTATION_LOGBACK_APPENDER_ENABLED: "true"
+    ports:
+      - "8082:8080"
+    depends_on:
+      axonserver:
+        condition: service_healthy
+      redpanda:
+        condition: service_started
+      otel-collector:
+        condition: service_started
+
+  # -------------------- Orchestration workers (Zeebe worker + Axon command gateway) --------------------
+  orchestration-workers:
+    build: ./orchestration-workers
+    environment:
+      OTEL_SERVICE_NAME: orchestration-workers
+      ZEEBE_ADDRESS: zeebe-gateway:26500
+      AXONSERVER_SERVERS: axonserver:8124
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+      OTEL_TRACES_EXPORTER: otlp
+      OTEL_METRICS_EXPORTER: none
+      OTEL_TRACES_SAMPLER: parentbased_traceidratio
+      OTEL_TRACES_SAMPLER_ARG: "1.0"
+      OTEL_INSTRUMENTATION_LOGBACK_APPENDER_ENABLED: "true"
+    ports:
+      - "8080:8080"
+    depends_on:
+      zeebe-gateway:
+        condition: service_started
+      axonserver:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+
+  # -------------------- Transfer API (client entry) --------------------
+  transfer-api:
+    build: ./transfer-api
+    environment:
+      OTEL_TRACES_SAMPLER: always_on
+      OTEL_TRACES_SAMPLER_ARG: "1.0"
+      OTEL_METRICS_EXPORTER: otlp
+      OTEL_SERVICE_NAME: transfer-api
+      ZEEBE_ADDRESS: zeebe-gateway:26500
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+      OTEL_TRACES_EXPORTER: otlp
+      OTEL_INSTRUMENTATION_LOGBACK_APPENDER_ENABLED: "true"
+      SECURITY_APIKEYVALUE: demo-key
+      OTEL_INSTRUMENTATION_SPRING_ACTUATOR_ENABLED: "false"
+    ports:
+      - "8083:8080"
+    depends_on:
+      - zeebe-gateway
+      - otel-collector
+
+volumes:
+  zeebe1:
+  zeebe2:
+  zeebe3:
+  grafana-data:

@@ -1,0 +1,19 @@
+server:
+  port: 8080
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: prometheus,health,info
+
+zeebe:
+  client:
+    broker:
+      gateway-address: ${ZEEBE_ADDRESS:localhost:26500}
+    security:
+      plaintext: true
+
+axon:
+  axonserver:
+    servers: ${AXONSERVER_SERVERS:localhost:8124}

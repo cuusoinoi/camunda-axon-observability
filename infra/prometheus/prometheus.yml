@@ -1,0 +1,23 @@
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  - job_name: transfer-api
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ['transfer-api:8080']
+
+  - job_name: orchestration-workers
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ['orchestration-workers:8080']
+
+  - job_name: account-service
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ['account-service:8080']
+
+  - job_name: ledger-service
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ['ledger-service:8080']

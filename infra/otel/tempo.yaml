@@ -1,0 +1,43 @@
+auth_enabled: false
+
+server:
+  http_listen_port: 3200
+
+# Single-binary Tempo config for local dev.
+# - receives OTLP (gRPC/HTTP)
+# - stores traces locally
+# - enables TraceQL search for Grafana Explore
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+        http:
+
+ingester:
+  max_block_duration: 5m
+
+compactor:
+  compaction:
+    block_retention: 24h
+
+storage:
+  trace:
+    backend: local
+    local:
+      path: /tmp/tempo/traces
+    wal:
+      path: /tmp/tempo/wal
+
+
+querier:
+  frontend_worker:
+    frontend_address: 127.0.0.1:9095
+
+query_frontend:
+  search:
+    duration_slo: 5s
+    throughput_bytes_slo: 1e9
+  trace_by_id:
+    duration_slo: 5s

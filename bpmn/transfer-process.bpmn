@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+ xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+ id="Defs_Transfer" targetNamespace="bank-grade">
+
+  <bpmn:process id="MoneyTransferProcess" isExecutable="true">
+
+    <bpmn:startEvent id="StartTransfer" name="Start"/>
+
+    <bpmn:serviceTask id="DebitAccount" name="Debit Account">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="orchestration.account.debit" retries="3"/>
+      </bpmn:extensionElements>
+    </bpmn:serviceTask>
+
+    <bpmn:serviceTask id="BookLedger" name="Book Ledger">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="orchestration.ledger.book" retries="5"/>
+      </bpmn:extensionElements>
+    </bpmn:serviceTask>
+
+    <bpmn:endEvent id="TransferCompleted" name="Completed"/>
+
+    <bpmn:sequenceFlow id="f1" sourceRef="StartTransfer" targetRef="DebitAccount"/>
+    <bpmn:sequenceFlow id="f2" sourceRef="DebitAccount" targetRef="BookLedger"/>
+    <bpmn:sequenceFlow id="f3" sourceRef="BookLedger" targetRef="TransferCompleted"/>
+
+  </bpmn:process>
+</bpmn:definitions>

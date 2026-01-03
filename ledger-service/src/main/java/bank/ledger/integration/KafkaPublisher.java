@@ -1,0 +1,25 @@
+package bank.ledger.integration;
+
+import bank.ledger.domain.events.LedgerBookedEvent;
+import io.micrometer.core.instrument.MeterRegistry;
+import org.axonframework.eventhandling.EventHandler;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.stereotype.Component;
+
+@Component
+public class KafkaPublisher {
+
+  private final KafkaTemplate<String, Object> kafkaTemplate;
+  private final MeterRegistry registry;
+
+  public KafkaPublisher(KafkaTemplate<String, Object> kafkaTemplate, MeterRegistry registry) {
+    this.kafkaTemplate = kafkaTemplate;
+    this.registry = registry;
+  }
+
+  @EventHandler
+  public void on(LedgerBookedEvent evt) {
+    kafkaTemplate.send("ledger.events.v1", evt.transferId, evt);
+    registry.counter("domain.integration.event.published", "service", "ledger", "topic", "ledger.events.v1").increment();
+  }
+}
